@@ -342,12 +342,12 @@ function OnUpdate(doc, meta) {
             // set the value
             const value = doc[doc._type + '_' + codes[i]];
             // if the value exists, upsert it.  i.e. airline_iata,
-            // airline_icao, airport_iata, airport_icao, airport_iden
+            // airline_icao, airport_iata, airport_icao, airport_ident
             if (value) {
                 // set the document id that we'll use
-                const id = doc._type + '::code::' + value;
+                var id = doc._type + '::code::' + value;
                 // build the lookup document
-                const data = {
+                var data = {
                     _id: id,
                     _type: 'code',
                     id: doc[doc._type + '_id'],
@@ -356,7 +356,7 @@ function OnUpdate(doc, meta) {
                     code: doc[doc._type + '_' + codes[i]]
                 };
                 // upsert the code lookup document
-                const ups = UPSERT INTO `flight-data` (KEY, VALUE)
+                var ups = UPSERT INTO `flight-data` (KEY, VALUE)
                             VALUES (:id, JSON_DECODE(:data));
                 ups.execQuery();
             }
