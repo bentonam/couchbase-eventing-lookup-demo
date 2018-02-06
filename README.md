@@ -1,4 +1,4 @@
-# Airlines and Airports Eventing Demo
+# Eventing Airlines and Airports Lookup Demo
 
 --
 
@@ -7,7 +7,7 @@
 Clone this repository
 
 ```bash
-git clone https://git.io/vNAJA
+git clone https://github.com/bentonam/couchbase-eventing-lookup-demo.git
 ```
 `cd` into the project directory
 
@@ -40,6 +40,8 @@ After a few seconds, the Couchbase container will be up and running.  This conta
 - Eventing
 
 You can open the admin console by going to [http://localhost:8091/ui/index.html]() in a web browser.  The default username is `Administrator` and the `password` is password.  You can change these if you'd like in the `docker-compose.yaml` file.  
+
+![](https://d3vv6lp55qjaqc.cloudfront.net/items/1N2z1z2n3s1b2G2c2S1l/Screen%20Recording%202018-02-06%20at%2010.34%20AM.gif?X-CloudApp-Visitor-Id=1639251&v=95dd8e8e)
 
 ![](assets/dashboard.png)
 
