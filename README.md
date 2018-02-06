@@ -1,19 +1,19 @@
-# Airlines and Airports Eventing Demo 
+# Airlines and Airports Eventing Demo
 
 --
 
 ## Setup
 
-Clone this repository 
+Clone this repository
 
 ```bash
-git clone https://github.com/bentonam/full-stack-development-with-javascript-and-nosql.git
+git clone https://git.io/vNAJA
 ```
 `cd` into the project directory
 
 Go ahead and open up the project in your favorite IDE, if you using Atom just run `atom .` from terminal
 
-This demo runs in a single Docker container, from terminal run the following command: 
+This demo runs in a single Docker container, from terminal run the following command:
 
 **Note:** Replace `$URL_TO_BUILD` with a valid rpm build
 
@@ -31,7 +31,7 @@ Now start the container
 docker-compose up -d
 ```
 
-After a few seconds, the Couchbase container will be up and running.  This container has the following services enabled: 
+After a few seconds, the Couchbase container will be up and running.  This container has the following services enabled:
 
 - Data
 - Index
@@ -109,7 +109,7 @@ Our application will need to find airlines and airports based on their identifyi
 
 ## Load Dataset
 
-We need to first load our airline and airport datasets into Couchbase.  Execute the following command: 
+We need to first load our airline and airport datasets into Couchbase.  Execute the following command:
 
 ```bash
 docker exec eventing-couchbase \
@@ -129,64 +129,9 @@ This will load the `flight-data` bucket with ~`12,780` documents.
 
 Now we want to query the datasets to be able to find airlines and airports based on their IATA or ICAO codes.  While the concept applies to both, for the purposes of this demo we're going to focus on just airlines.  Each Airline has 2 identifying codes a 2 character [IATA](http://www.iata.org/about/members/Pages/airline-list.aspx?All=true) / [FAA](http://www.faa.gov/) Code and a 3 character [ICAO](http://www.icao.int/) code.  Each of these attributes are stored as separate attributes on the airlines document as `airline_iata` and `airline_icao`.
 
-Open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the following statements. 
+Open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the following statements.
 
 ##### Index
-
-```sql
-CREATE INDEX idx_airlines_codes ON `flight-data`(
-	airline_iata,
-	airline_icao
-)
-WHERE (
-        airline_iata IS NOT NULL
-        OR
-        airline_icao IS NOT NULL
-    )
-    AND _type = 'airline'
-USING GSI;
-```
-
-##### Query
-
-```sql
-SELECT airlines.airline_id, airlines.airline_name,
-	airlines.airline_iata, airlines.airline_icao
-FROM `flight-data` AS airlines
-WHERE (
-	airlines.airline_iata = 'DL'
-	OR (
-		airlines.airline_iata <> 'DL'
-		AND
-		airlines.airline_icao = 'DL'
-		)
-	)
-	AND airlines._type = 'airline'
-LIMIT 1;
-```
-
-##### Results
-
-```json
-[
-  {
-    "airline_iata": "DL",
-    "airline_icao": "DAL",
-    "airline_id": 2009,
-    "airline_name": "Delta Air Lines"
-  }
-]
-```
-
-This works, but can be optimized because of the `OR` statement that we have to use to attempt to match either code (and many other reasons).  We can improve this by creating 2 separate indexes on each code the query using a `UNION` statement.
-
-##### Index
-
-Drop the index we just created, since it will no longer be used.
-
-```sql
-DROP INDEX `flight-data`.idx_airlines_codes;
-```
 
 Create index for Airline IATA codes
 
@@ -379,6 +324,49 @@ This will deploy a shell of our function that looks similar to:
 
 Paste the following code into the editor:
 
+### ES5 Construct (Officially Supported)
+
+```javascript
+function OnUpdate(doc, meta) {
+    // make sure the document is only an airline or airport document
+    if (
+        doc._type &&
+        'airline,airport'.indexOf(doc._type) !== -1
+    ) {
+        // loop over the 3 code types and use dynamic references of the
+        // _type + code for population
+        var codes = [ 'iata', 'icao', 'ident' ];
+        for (var i = 0; i < codes.length; i++) {
+            // set the value
+            const value = doc[doc._type + '_' + codes[i]];
+            // if the value exists, upsert it.  i.e. airline_iata,
+            // airline_icao, airport_iata, airport_icao, airport_iden
+            if (value) {
+                // set the document id that we'll use
+                const id = doc._type + '::code::' + value;
+                // build the lookup document
+                const data = {
+                    _id: id,
+                    _type: 'code',
+                    id: doc[doc._type + '_id'],
+                    designation: doc._type,
+                    code_type: code,
+                    code: doc[doc._type + '_' + codes[i]]
+                };
+                // upsert the code lookup document
+                const ups = UPSERT INTO `flight-data` (KEY, VALUE)
+                            VALUES (:id, JSON_DECODE(:data));
+                ups.execQuery();
+            }
+        }
+    }
+}
+function OnDelete(meta) {
+}
+```
+
+### ES6 Construct (Not Officially Supported)
+
 ```javascript
 function OnUpdate(doc, meta) {
     // make sure the document is only an airline or airport document
@@ -386,16 +374,19 @@ function OnUpdate(doc, meta) {
         doc._type &&
        [  'airline', 'airport'].includes(doc._type)
     ) {
-        // loop over the 3 code types and use dynamic references of the _type + code for population
+        // loop over the 3 code types and use dynamic references of the
+        // _type + code for population
         const codes = [ 'iata', 'icao', 'ident' ];
         for (const code of codes) {
-            // set the value 
+            // set the value
             const value = doc[`${doc._type}_${code}`];
-            // if the value exists, upsert it.  
-            // i.e. airline_iata, airline_icao, airport_iata, airport_icao, airport_ident
+            // if the value exists, upsert it.  i.e. airline_iata,
+            // airline_icao, airport_iata, airport_icao, airport_ident
             if (value) {
-                const id = `${doc._type}::code::${value}`; // set the document id that we'll use
-                const data = { // build the lookup document
+                // set the document id that we'll use
+                const id = `${doc._type}::code::${value}`;
+                // build the lookup document
+                const data = {
                     _id: id,
                     _type: 'code',
                     id: doc[`${doc._type}_id`],
@@ -404,7 +395,8 @@ function OnUpdate(doc, meta) {
                     code: doc[`${doc._type}_${code}`]
                 };
                 // upsert the code lookup document
-                const ups = UPSERT INTO `flight-data` (KEY, VALUE) VALUES (:id, JSON_DECODE(:data));
+                const ups = UPSERT INTO `flight-data` (KEY, VALUE)
+                            VALUES (:id, JSON_DECODE(:data));
                 ups.execQuery();
             }
         }
@@ -418,7 +410,7 @@ We now want to see what a mutation looks like but first we need to deploy our ne
 
 1. Click on "Eventing"
 2. Click on your newly defined function `func_airline_airports_lookup_codes`
-3. Click on "Deploy", leave the defaults 
+3. Click on "Deploy", leave the defaults
 4. Click "Deploy Function"
 
 Open another tab and open up the documents editor for the [flight-data bucket](http://localhost:8091/ui/index.html#!/buckets/documents?openedBucket=flight-data&bucket=flight-data&pageLimit=10&pageNumber=0).
@@ -459,7 +451,7 @@ docker exec eventing-couchbase \
 	/usr/data/models/airlines.yaml,/usr/data/models/airports.yaml
 ```
 
-Now if we open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the same look document queries that we previously ran we'll get the same results. 
+Now if we open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the same look document queries that we previously ran we'll get the same results.
 
 ##### Query
 
