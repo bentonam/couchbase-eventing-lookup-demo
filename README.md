@@ -41,8 +41,6 @@ After a few seconds, the Couchbase container will be up and running.  This conta
 
 You can open the admin console by going to [http://localhost:8091/ui/index.html]() in a web browser.  The default username is `Administrator` and the `password` is password.  You can change these if you'd like in the `docker-compose.yaml` file.  
 
-![](https://d3vv6lp55qjaqc.cloudfront.net/items/1N2z1z2n3s1b2G2c2S1l/Screen%20Recording%202018-02-06%20at%2010.34%20AM.gif?X-CloudApp-Visitor-Id=1639251&v=95dd8e8e)
-
 ![](assets/dashboard.png)
 
 Browse to the [Buckets](http://localhost:8091/ui/index.html#!/buckets) tag and you will see there is two buckets created for you `flight-data` and `metadata`
@@ -326,6 +324,47 @@ This will deploy a shell of our function that looks similar to:
 
 Paste the following code into the editor:
 
+### ES6 Construct (Not Officially Supported)
+
+```javascript
+function OnUpdate(doc, meta) {
+    // make sure the document is only an airline or airport document
+    if (
+        doc._type &&
+       [  'airline', 'airport' ].includes(doc._type)
+    ) {
+        // loop over the 3 code types and use dynamic references of the
+        // _type + code for population
+        const codes = [ 'iata', 'icao', 'ident' ];
+        for (const code of codes) {
+            // set the value
+            const value = doc[`${doc._type}_${code}`];
+            // if the value exists, upsert it.  i.e. airline_iata,
+            // airline_icao, airport_iata, airport_icao, airport_ident
+            if (value) {
+                // set the document id that we'll use
+                const id = `${doc._type}::code::${value}`;
+                // build the lookup document
+                const data = {
+                    _id: id,
+                    _type: 'code',
+                    id: doc[`${doc._type}_id`],
+                    designation: doc._type,
+                    code_type: code,
+                    code: doc[`${doc._type}_${code}`]
+                };
+                // upsert the code lookup document
+                const ups = UPSERT INTO `flight-data` (KEY, VALUE)
+                            VALUES (:id, JSON_DECODE(:data));
+                ups.execQuery();
+            }
+        }
+    }
+}
+function OnDelete(meta) {
+}
+```
+
 ### ES5 Construct (Officially Supported)
 
 ```javascript
@@ -357,47 +396,6 @@ function OnUpdate(doc, meta) {
                 };
                 // upsert the code lookup document
                 var ups = UPSERT INTO `flight-data` (KEY, VALUE)
-                            VALUES (:id, JSON_DECODE(:data));
-                ups.execQuery();
-            }
-        }
-    }
-}
-function OnDelete(meta) {
-}
-```
-
-### ES6 Construct (Not Officially Supported)
-
-```javascript
-function OnUpdate(doc, meta) {
-    // make sure the document is only an airline or airport document
-    if (
-        doc._type &&
-       [  'airline', 'airport'].includes(doc._type)
-    ) {
-        // loop over the 3 code types and use dynamic references of the
-        // _type + code for population
-        const codes = [ 'iata', 'icao', 'ident' ];
-        for (const code of codes) {
-            // set the value
-            const value = doc[`${doc._type}_${code}`];
-            // if the value exists, upsert it.  i.e. airline_iata,
-            // airline_icao, airport_iata, airport_icao, airport_ident
-            if (value) {
-                // set the document id that we'll use
-                const id = `${doc._type}::code::${value}`;
-                // build the lookup document
-                const data = {
-                    _id: id,
-                    _type: 'code',
-                    id: doc[`${doc._type}_id`],
-                    designation: doc._type,
-                    code_type: code,
-                    code: doc[`${doc._type}_${code}`]
-                };
-                // upsert the code lookup document
-                const ups = UPSERT INTO `flight-data` (KEY, VALUE)
                             VALUES (:id, JSON_DECODE(:data));
                 ups.execQuery();
             }
