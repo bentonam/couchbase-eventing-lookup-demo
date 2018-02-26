@@ -10,7 +10,7 @@ SERVICES=${SERVICES:='data,index,query,fts,eventing'}
 
 echo ' '
 printf 'Waiting for Couchbase Server to start'
-until $(curl --output /dev/null --silent --head --fail http://localhost:8091/pools); do
+until $(curl --output /dev/null --silent --head --fail -u Administrator:password http://localhost:8091/pools); do
   printf .
   sleep 1
 done
