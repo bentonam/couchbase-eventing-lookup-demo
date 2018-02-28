@@ -62,7 +62,23 @@ echo Creating "flight-data" bucket
   --user=$CLUSTER_USERNAME \
   --password=$CLUSTER_PASSWORD \
   --bucket=flight-data \
-  --bucket-ramsize=300 \
+  --bucket-ramsize=100 \
+  --bucket-type=couchbase \
+  --enable-index-replica=0 \
+  --enable-flush=1 \
+  --bucket-replica=0 \
+  --bucket-eviction-policy=valueOnly \
+  --wait
+
+sleep 3
+
+echo Creating "lookup" bucket
+/opt/couchbase/bin/couchbase-cli bucket-create \
+  --cluster localhost:8091 \
+  --user=$CLUSTER_USERNAME \
+  --password=$CLUSTER_PASSWORD \
+  --bucket=lookup \
+  --bucket-ramsize=100 \
   --bucket-type=couchbase \
   --enable-index-replica=0 \
   --enable-flush=1 \

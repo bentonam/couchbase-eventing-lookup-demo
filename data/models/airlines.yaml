@@ -20,7 +20,7 @@ data:
         code: this.airline_iata
       });
     }
-    if (this.airline_icao && this.airline_icao !== this.airline_iata) {
+    if (this.airline_icao) {
       globals.codes.push({
         id: this.airline_id,
         designation: 'airline',

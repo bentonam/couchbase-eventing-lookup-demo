@@ -43,7 +43,7 @@ You can open the admin console by going to [http://localhost:8091/ui/index.html]
 
 ![](assets/dashboard.png)
 
-Browse to the [Buckets](http://localhost:8091/ui/index.html#!/buckets) tag and you will see there is two buckets created for you `flight-data` and `metadata`
+Browse to the [Buckets](http://localhost:8091/ui/index.html#!/buckets) tag and you will see there are three buckets created for you `flight-data`, `lookup` and `metadata`
 
 ![](assets/buckets.png)
 
@@ -183,10 +183,6 @@ LIMIT 1;
 ]
 ```
 
-This performs much better as we are now using 2 different indexes for the IATA and ICAO codes.  However, we can improve this query even more.  
-
-##### Index
-
 Drop the previously created indexes as they will no longer be used.
 
 ```sql
@@ -199,20 +195,7 @@ DROP INDEX `flight-data`.idx_airlines_icao_codes;
 
 ## Lookup Documents
 
-Based on our access pattern we want to ultimately find an airline or airport based on their IATA or ICAO code.  Instead of creating separate GSI indexes to satisfy our predicate, we can create lookup documents and achieve the same result still using N1QL but pure KV operations.  
-
-From the Admin Console, flush the `flight-data` bucket or execute the following command from terminal
-
-```bash
-docker exec eventing-couchbase \
-	couchbase-cli \
-	bucket-flush \
-	--cluster localhost \
-	--username Administrator \
-	--password password \
-	--bucket flight-data \
-	--force
-```
+Based on our access pattern we want to ultimately find an airline or airport based on their IATA or ICAO code.  Instead of creating separate indexes to satisfy our predicate, we can create lookup documents and achieve the same result still using N1QL but pure KV operations.  
 
 Lookup documents are traditionally generated and maintained by the application that is writing the data.  Based on our models above, we'll create a lookup document that allows us to work with both airlines and airports.
 
@@ -227,7 +210,7 @@ Lookup documents are traditionally generated and maintained by the application t
 }
 ```
 
-Execute the following command to load the Airline and Airport documents, as well as the Codes lookup document.
+Execute the following command to load the codes documents into the `lookup` bucket.
 
 ```bash
 docker exec eventing-couchbase \
@@ -235,13 +218,15 @@ docker exec eventing-couchbase \
 	--server localhost \
 	--username Administrator \
 	--password password \
-	--bucket flight-data \
-	/usr/data/models/airlines.yaml,/usr/data/models/airports.yaml,/usr/data/models/codes.yaml
+	--bucket lookup \
+	/usr/data/models/codes.yaml
 ```
 
-This will take a few seconds, afterwards you'll have about `32,365` documents in the `flight-data` bucket
+This will take a few seconds, afterwards you'll have about 19k documents in the `lookup` bucket
 
 Our Codes model is keyed by `{{designation}}::code::{{code}}` i.e. `airline::code::DL`.  Because of how these documents are keyed, we do not even need a GSI index.  Using this predictive key pattern the code is used as part of the key name on the codes document.  Code is essentially an inverted index that we can store a small amout of data and get us back to our parent document.
+
+#### Airline Queries
 
 ##### Query
 
@@ -250,7 +235,7 @@ Query by the IATA code
 ```sql
 SELECT airlines.airline_id, airlines.airline_name,
 	airlines.airline_iata, airlines.airline_icao
-FROM `flight-data` AS codes
+FROM `lookup` AS codes
 USE KEYS 'airline::code::DL'
 INNER JOIN `flight-data` AS airlines
 	ON KEYS 'airline::' || TOSTRING( codes.id );
@@ -261,7 +246,7 @@ Query by the ICAO code
 ```sql
 SELECT airlines.airline_id, airlines.airline_name,
 	airlines.airline_iata, airlines.airline_icao
-FROM `flight-data` AS codes
+FROM `lookup` AS codes
 USE KEYS 'airline::code::DAL'
 INNER JOIN `flight-data` AS airlines
 	ON KEYS 'airline::' || TOSTRING( codes.id );
@@ -280,13 +265,52 @@ INNER JOIN `flight-data` AS airlines
 ]
 ```
 
+#### Airport Queries
+
+##### Query
+
+Query by the IATA code
+
+```sql
+SELECT airports.airport_id, airports.airport_name,
+    airports.airport_iata, airports.airport_icao
+FROM `lookup` AS codes
+USE KEYS 'airport::code::ICT'
+INNER JOIN `flight-data` AS airports
+	ON KEYS 'airport::' || TOSTRING( codes.id );
+```
+
+Query by the ICAO code
+
+```sql
+SELECT airports.airport_id, airports.airport_name,
+	airports.airport_iata, airports.airport_icao
+FROM `lookup` AS codes
+USE KEYS 'airport::code::KICT'
+INNER JOIN `flight-data` AS airports
+	ON KEYS 'airport::' || TOSTRING( codes.id );
+```
+
+##### Results
+
+```json
+[
+  {
+    "airport_iata": "ICT",
+    "airport_icao": "KICT",
+    "airport_id": 3605,
+    "airport_name": "Wichita Dwight D. Eisenhower National Airport"
+  }
+]
+```
+
 We could follow these same queries for Airports, but the result is the same.  Using a lookup document / inverted index is the fastest query we can perform using a key lookup and inner join.  
 
 ## Events
 
 So why did we go through this exercise?  Up until now, it has been the responsibility of the applications writing data to maintain these lookup documents / inverted indexes at document write time or they may have used the Kafka connector and had a separate application writing these documents, offloading those operations from their main application.  This is a perfect use case for Events to maintain these lookup documents for us.  
 
-Let's start by flushing our `flight-data` bucket from the Admin Console or you can run the following command in terminal
+Let's start by flushing our `lookup` bucket from the Admin Console or you can run the following command in terminal
 
 ```bash
 docker exec eventing-couchbase \
@@ -295,24 +319,15 @@ docker exec eventing-couchbase \
 	--cluster localhost \
 	--username Administrator \
 	--password password \
-	--bucket flight-data \
+	--bucket lookup \
 	--force
 ```
 
 From the Admin Console, click on "Eventing"
 
-Click "Add" and fill out the following and then click "Continue"
+Click "Add" and fill out the following and then click "Next: Add Code"
 
-```
-Source bucket: flight-data
-Metadata bucket: metadata
-Name: func_airline_airports_lookup_codes
-Description:
-	This event handles creation of lookups documents for airlines
-	and airports based on their IATA and ICAO codes
-RBAC username: Administrator
-RBAC password: password
-```
+![](assets/eventing-function.png)
 
 Click "Continue"
 
@@ -332,12 +347,12 @@ function OnUpdate(doc, meta) {
 	    ) {
 	        // loop over the 3 code types and use dynamic references of the
 	        // _type + code for population
-	        var codes = [ 'iata', 'icao', 'ident' ];
+	        var codes = [ 'iata', 'icao' ];
 	        for (var i = 0; i < codes.length; i++) {
 	            // set the value
 	            var value = doc[doc._type + '_' + codes[i]];
 	            // if the value exists, upsert it.  i.e. airline_iata,
-	            // airline_icao, airport_iata, airport_icao, airport_ident
+	            // airline_icao, airport_iata, airport_icao
 	            if (value) {
 	                // set the document id that we'll use
 	                var id = doc._type + '::code::' + value;
@@ -350,10 +365,8 @@ function OnUpdate(doc, meta) {
 	                    code_type: codes[i],
 	                    code: doc[doc._type + '_' + codes[i]]
 	                };
-	                // upsert the code lookup document
-	                var ups = UPSERT INTO `flight-data` (KEY, VALUE)
-	                            VALUES ($id, JSON_DECODE($data));
-	                ups.execQuery();
+	                // dest is the bucket alias, upsert the code lookup document
+	                dest[id] = data;
 	            }
 	        }
 	    }
@@ -365,88 +378,20 @@ function OnDelete(meta) {
 }
 ```
 
-We now want to see what a mutation looks like but first we need to deploy our newly created function.
+Press "Save" and Deploy 
 
 1. Click on "Eventing"
-2. Click on your newly defined function `func_airline_airports_lookup_codes`
+2. Click on your newly defined function `func_lookup_codes`
+3. Feed Boundary: Everything
 3. Click on "Deploy", leave the defaults
 4. Click "Deploy Function"
 
-Open another tab and open up the documents editor for the [flight-data bucket](http://localhost:8091/ui/index.html#!/buckets/documents?openedBucket=flight-data&bucket=flight-data&pageLimit=10&pageNumber=0).
-
-Add a new document as follows:
-
-**Key:** `airline::2009`
-
-**Document:**
-
-```json
-{
-  "_id": "airline::2009",
-  "_type": "airline",
-  "airline_id": 2009,
-  "airline_name": "Delta Air Lines",
-  "airline_iata": "DL",
-  "airline_icao": "DAL",
-  "callsign": "DELTA",
-  "iso_country": "US",
-  "active": true
-}
-```
-
-After you have added the document, go back to the [Documents](http://localhost:8091/ui/index.html#!/buckets/documents?openedBucket=flight-data&bucket=flight-data&pageLimit=10&pageNumber=0) bucket and now you'll see that there are 3 documents, even though you only added 1.
-
-![](assets/bucket-documents.png)
-
-Let's reload just the airline and airport datasets with our eventing function still deployed.  Execute the following command to load just the airlines and airports documents into the bucket.  
-
-```bash
-docker exec eventing-couchbase \
-	fakeit couchbase \
-	--server localhost \
-	--username Administrator \
-	--password password \
-	--bucket flight-data \
-	/usr/data/models/airlines.yaml,/usr/data/models/airports.yaml
-```
-
-Now if we open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the same look document queries that we previously ran we'll get the same results.
-
-##### Query
-
-Query by the IATA code
-
-```sql
-SELECT airlines.airline_id, airlines.airline_name,
-	airlines.airline_iata, airlines.airline_icao
-FROM `flight-data` AS codes
-USE KEYS 'airline::code::DL'
-INNER JOIN `flight-data` AS airlines
-	ON KEYS 'airline::' || TOSTRING( codes.id );
-```
-
-Query by the ICAO code
-
-```sql
-SELECT airlines.airline_id, airlines.airline_name,
-	airlines.airline_iata, airlines.airline_icao
-FROM `flight-data` AS codes
-USE KEYS 'airline::code::DAL'
-INNER JOIN `flight-data` AS airlines
-	ON KEYS 'airline::' || TOSTRING( codes.id );
-```
-
-##### Results
-
-```json
-[
-  {
-    "airline_iata": "DL",
-    "airline_icao": "DAL",
-    "airline_id": 2009,
-    "airline_name": "Delta Air Lines"
-  }
-]
-```
+Now if we open the [Query Workbench](http://localhost:8091/ui/index.html#!/query/workbench) and execute the same lookup document queries that we previously ran we'll get the same results.
 
 We've successfully implementing and Eventing function to create lookup documents offloading their creation from our application.  
+
+Bring down the environment by running the command: 
+
+```bash
+docker-compose down -v
+```

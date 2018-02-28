@@ -20,7 +20,7 @@ data:
         code: this.airport_iata
       });
     }
-    if (this.airport_icao && this.airport_icao !== this.airport_iata) {
+    if (this.airport_icao) {
       globals.codes.push({
         id: this.airport_id,
         designation: 'airport',
@@ -28,20 +28,12 @@ data:
         code: this.airport_icao
       });
     }
-    if (this.airport_ident && this.airport_ident !== this.airport_icao && this.airport_ident !== this.airport_iata) {
-      globals.codes.push({
-        id: this.airport_id,
-        designation: 'airport',
-        code_type: 'ident',
-        code: this.airport_ident
-      });
-    }
 properties:
   _id:
     type: string
     description: The document id
     data:
-      post_build: "`airport_${this.airport_id}`"
+      post_build: "`airport::${this.airport_id}`"
   _type:
     type: string
     description: The document type
